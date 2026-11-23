@@ -1,0 +1,27 @@
+# Git
+.git
+.gitignore
+
+# Dependencies & Build Artefacts
+node_modules
+dist
+target
+*.class
+*.jar
+*.war
+
+# Environment & Local Secrets
+.env
+.env.local
+.env.*.local
+
+# IDE & Editor
+.idea
+.vscode
+*.iml
+*.log
+
+# Docker & Temp
+.dockerignore
+Dockerfile*
+docker-compose*.yml
