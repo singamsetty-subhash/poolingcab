@@ -30,11 +30,8 @@ RUN npm run build
 FROM maven:3.9.9-eclipse-temurin-17 AS backend-builder
 WORKDIR /app
 
-# Cache Maven dependencies
+# Copy Maven POM and source files
 COPY backend/pom.xml ./
-RUN mvn -q dependency:go-offline || true
-
-# Copy backend source code
 COPY backend/src ./src
 
 # Embed compiled frontend assets into Spring Boot static resource directory

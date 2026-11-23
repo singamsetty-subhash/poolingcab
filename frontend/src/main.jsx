@@ -33,7 +33,10 @@ import {
   ShieldCheck,
   KeyRound,
   Save,
-  FileText
+  FileText,
+  Edit3,
+  Eye,
+  CheckCircle
 } from 'lucide-react';
 import './style.css';
 
@@ -236,6 +239,30 @@ function App() {
   });
   const [mapPickerTarget, setMapPickerTarget] = useState(null); // 'pickup' | 'destination' | 'pool_origin' | 'pool_destination'
   const [poolFormCoords, setPoolFormCoords] = useState({ origin: '', destination: '' });
+  const [selectedRideForUpdate, setSelectedRideForUpdate] = useState(null);
+  const [selectedRideForDetails, setSelectedRideForDetails] = useState(null);
+
+  const bookedRideIds = new Set(
+    (bookings || []).map(b => b.rideId || (b.ride && b.ride.id)).filter(Boolean)
+  );
+
+  async function handlePoolUpdated(updatedRide) {
+    flash('Pool details updated successfully!');
+    setSelectedRideForUpdate(null);
+    await load();
+  }
+
+  async function handleCancelBooking(bookingId) {
+    if (!window.confirm('Are you sure you want to cancel this booking reservation?')) return;
+    try {
+      await api(`/bookings/${bookingId}`, { method: 'DELETE' });
+      flash('Booking reservation cancelled successfully.');
+      setSelectedRideForDetails(null);
+      await load();
+    } catch (err) {
+      flash(err.message || 'Failed to cancel booking', true);
+    }
+  }
 
   function handleSelectFromMap(loc, target) {
     const t = target || mapPickerTarget;
@@ -827,9 +854,12 @@ function App() {
             <RideCards
               rides={visibleRides.slice(0, 4)}
               user={user}
+              bookedRideIds={bookedRideIds}
               onBook={openBookingModal}
               onOpenPool={() => (user ? setModal('pool') : setModal('login'))}
               onOpenMap={openMapModal}
+              onUpdatePool={r => setSelectedRideForUpdate(r)}
+              onViewDetails={r => setSelectedRideForDetails(r)}
             />
           </section>
         </main>
@@ -1041,9 +1071,12 @@ function App() {
           <RideCards
             rides={visibleRides}
             user={user}
+            bookedRideIds={bookedRideIds}
             onBook={openBookingModal}
             onOpenPool={() => (user ? setModal('pool') : setModal('login'))}
             onOpenMap={openMapModal}
+            onUpdatePool={r => setSelectedRideForUpdate(r)}
+            onViewDetails={r => setSelectedRideForDetails(r)}
           />
         </main>
       )}
@@ -1061,6 +1094,9 @@ function App() {
           setModal={setModal}
           doAction={doAction}
           onOpenMap={openMapModal}
+          onUpdatePool={r => setSelectedRideForUpdate(r)}
+          onViewDetails={r => setSelectedRideForDetails(r)}
+          onCancelBooking={handleCancelBooking}
         />
       )}
 
@@ -1073,6 +1109,10 @@ function App() {
           setToken={setToken}
           flash={flash}
           setPage={setPage}
+          onOpenMap={openMapModal}
+          onUpdatePool={r => setSelectedRideForUpdate(r)}
+          onViewDetails={r => setSelectedRideForDetails(r)}
+          onCancelBooking={handleCancelBooking}
         />
       )}
 
@@ -1083,6 +1123,8 @@ function App() {
           flash={flash}
           doAction={doAction}
           onOpenMap={openMapModal}
+          onUpdatePool={r => setSelectedRideForUpdate(r)}
+          onViewDetails={r => setSelectedRideForDetails(r)}
         />
       )}
 
@@ -1140,12 +1182,38 @@ function App() {
           close={() => setMapModal(null)}
         />
       )}
+
+      {selectedRideForUpdate && (
+        <UpdatePoolModal
+          ride={selectedRideForUpdate}
+          close={() => setSelectedRideForUpdate(null)}
+          onSave={handlePoolUpdated}
+          api={api}
+          flash={flash}
+          onOpenMapPicker={setMapPickerTarget}
+          poolFormCoords={poolFormCoords}
+        />
+      )}
+
+      {selectedRideForDetails && (
+        <PoolDetailsModal
+          item={selectedRideForDetails}
+          user={user}
+          close={() => setSelectedRideForDetails(null)}
+          onOpenMap={openMapModal}
+          onUpdatePool={r => {
+            setSelectedRideForDetails(null);
+            setSelectedRideForUpdate(r);
+          }}
+          onCancelBooking={handleCancelBooking}
+        />
+      )}
     </>
   );
 }
 
 // Sleek Dark Ride Cards
-function RideCards({ rides, user, onBook, onOpenPool, onOpenMap }) {
+function RideCards({ rides, user, bookedRideIds = new Set(), onBook, onOpenPool, onOpenMap, onUpdatePool, onViewDetails }) {
   return (
     <div className="ride-grid">
       {rides.length ? (
@@ -1222,14 +1290,75 @@ function RideCards({ rides, user, onBook, onOpenPool, onOpenMap }) {
                 >
                   <Map size={14} />
                 </button>
-                {user && r.driverId === user.id ? (
-                  <span className="badge-pill badge-approved" style={{ fontSize: '12px', padding: '6px 12px' }}>
-                    Your Pool (Organizer)
-                  </span>
+                {user && (r.driverId === user.id || r.driverEmail === user.email || (r.driver && r.driver.id === user.id)) ? (
+                  <>
+                    <span className="badge-pill badge-approved" style={{ fontSize: '11px', padding: '5px 10px' }}>
+                      Your Pool
+                    </span>
+                    <button
+                      type="button"
+                      className="outline-btn"
+                      style={{ fontSize: '12px', padding: '6px 10px', borderColor: 'var(--primary)', color: 'var(--primary)' }}
+                      onClick={() => onUpdatePool && onUpdatePool(r)}
+                      title="Update Pool Schedule, Seats & Status"
+                    >
+                      <Edit3 size={12} style={{ marginRight: '3px' }} /> Update
+                    </button>
+                    <button
+                      type="button"
+                      className="outline-btn"
+                      style={{ fontSize: '12px', padding: '6px 10px' }}
+                      onClick={() => onViewDetails && onViewDetails(r)}
+                      title="View Pool Specifications & Passengers"
+                    >
+                      <Eye size={12} style={{ marginRight: '3px' }} /> Details
+                    </button>
+                  </>
+                ) : bookedRideIds && bookedRideIds.has(r.id) ? (
+                  <>
+                    <span className="badge-pill" style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#10b981', border: '1px solid #10b981', fontSize: '11px', padding: '5px 10px' }}>
+                      <CheckCircle size={11} style={{ marginRight: '3px' }} /> Reserved
+                    </span>
+                    <button
+                      type="button"
+                      className="outline-btn"
+                      style={{ fontSize: '12px', padding: '6px 10px' }}
+                      onClick={() => onViewDetails && onViewDetails(r)}
+                      title="View Details & Driver Info"
+                    >
+                      <Eye size={12} style={{ marginRight: '3px' }} /> Details
+                    </button>
+                  </>
                 ) : (
-                  <button className="book-btn" onClick={() => onBook(r)}>
-                    Join Pool <ArrowRight size={14} />
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="outline-btn"
+                      style={{ fontSize: '12px', padding: '6px 10px' }}
+                      onClick={() => onViewDetails && onViewDetails(r)}
+                      title="View Pool Details"
+                    >
+                      <Eye size={12} style={{ marginRight: '3px' }} /> Details
+                    </button>
+                    {user?.role === 'ADMIN' && (
+                      <button
+                        type="button"
+                        className="outline-btn"
+                        style={{ fontSize: '12px', padding: '6px 10px', borderColor: 'var(--primary)', color: 'var(--primary)' }}
+                        onClick={() => onUpdatePool && onUpdatePool(r)}
+                        title="Admin: Edit Pool"
+                      >
+                        <Edit3 size={12} />
+                      </button>
+                    )}
+                    <button
+                      className="book-btn"
+                      onClick={() => onBook(r)}
+                      disabled={r.availableSeats <= 0}
+                    >
+                      {r.availableSeats <= 0 ? 'Full' : <>Join Pool <ArrowRight size={14} /></>}
+                    </button>
+                  </>
                 )}
               </div>
             </div>
@@ -1706,7 +1835,7 @@ function Modal({
 }
 
 // User Dashboard Component
-function Dashboard({ api, user, setUser, setPage, bookings, flash, load, setModal, doAction, onOpenMap }) {
+function Dashboard({ api, user, setUser, setPage, bookings, flash, load, setModal, doAction, onOpenMap, onUpdatePool, onViewDetails, onCancelBooking }) {
   const [tab, setTab] = useState('trips');
   const [rides, setRides] = useState([]);
   const [requests, setRequests] = useState([]);
@@ -1821,7 +1950,18 @@ function Dashboard({ api, user, setUser, setPage, bookings, flash, load, setModa
           )}
         </div>
       ) : (
-        <Profile api={api} user={user} setUser={setUser} flash={flash} setPage={setPage} isTab={true} />
+        <Profile
+          api={api}
+          user={user}
+          setUser={setUser}
+          flash={flash}
+          setPage={setPage}
+          isTab={true}
+          onOpenMap={onOpenMap}
+          onUpdatePool={onUpdatePool}
+          onViewDetails={onViewDetails}
+          onCancelBooking={onCancelBooking}
+        />
       )}
     </main>
   );
@@ -1884,12 +2024,436 @@ function DriverForm({ api, flash, refresh }) {
   );
 }
 
+// Modal to update pool details (origin, destination, departure, seats, price, notes, status)
+function UpdatePoolModal({ ride, close, onSave, api, flash, onOpenMapPicker, poolFormCoords }) {
+  if (!ride) return null;
+  const [origin, setOrigin] = useState(ride.origin || '');
+  const [destination, setDestination] = useState(ride.destination || '');
+  const [departure, setDeparture] = useState(ride.departure ? ride.departure.slice(0, 16) : '');
+  const [totalSeats, setTotalSeats] = useState(ride.totalSeats || 4);
+  const [availableSeats, setAvailableSeats] = useState(ride.availableSeats ?? 3);
+  const [pricePerSeat, setPricePerSeat] = useState(ride.pricePerSeat || 120);
+  const [status, setStatus] = useState(ride.status || 'OPEN');
+  const [notes, setNotes] = useState(ride.notes || '');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (poolFormCoords?.origin) setOrigin(poolFormCoords.origin);
+    if (poolFormCoords?.destination) setDestination(poolFormCoords.destination);
+  }, [poolFormCoords]);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!origin || !destination) {
+      flash('Please enter both origin and destination', true);
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await api(`/rides/${ride.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          origin,
+          destination,
+          departure,
+          totalSeats: Number(totalSeats),
+          availableSeats: Number(availableSeats),
+          pricePerSeat: Number(pricePerSeat),
+          status,
+          notes
+        })
+      });
+      if (onSave) onSave(res.ride || res);
+      close();
+    } catch (err) {
+      flash(err.message || 'Failed to update pool', true);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="shade" onMouseDown={close}>
+      <div className="modal" style={{ maxWidth: '560px' }} onMouseDown={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Edit3 size={18} color="var(--primary)" /> Update Pool Trip #{ride.id}
+            </h3>
+            <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+              Edit ride schedule, seat capacity, fare per commuter, or pool status.
+            </span>
+          </div>
+          <button className="icon-btn" onClick={close} type="button">
+            <X size={18} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                <label className="profile-field-label" style={{ margin: 0 }}>
+                  <MapPin size={13} color="var(--primary)" /> Pickup Location (Origin)
+                </label>
+                {onOpenMapPicker && (
+                  <button
+                    type="button"
+                    className="quiet"
+                    style={{ fontSize: '11px', padding: '2px 8px', color: 'var(--primary)' }}
+                    onClick={() => onOpenMapPicker('pool_origin')}
+                  >
+                    Select from Map
+                  </button>
+                )}
+              </div>
+              <input
+                className="profile-input"
+                required
+                value={origin}
+                onChange={e => setOrigin(e.target.value)}
+                placeholder="e.g. Koramangala 4th Block"
+              />
+            </div>
+
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                <label className="profile-field-label" style={{ margin: 0 }}>
+                  <MapPin size={13} color="#f59e0b" /> Dropoff Location (Destination)
+                </label>
+                {onOpenMapPicker && (
+                  <button
+                    type="button"
+                    className="quiet"
+                    style={{ fontSize: '11px', padding: '2px 8px', color: '#f59e0b' }}
+                    onClick={() => onOpenMapPicker('pool_destination')}
+                  >
+                    Select from Map
+                  </button>
+                )}
+              </div>
+              <input
+                className="profile-input"
+                required
+                value={destination}
+                onChange={e => setDestination(e.target.value)}
+                placeholder="e.g. Whitefield IT Park"
+              />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <div>
+                <label className="profile-field-label">
+                  <Calendar size={13} /> Departure Date & Time
+                </label>
+                <input
+                  type="datetime-local"
+                  className="profile-input"
+                  required
+                  value={departure}
+                  onChange={e => setDeparture(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="profile-field-label">
+                  <Wallet size={13} /> Fare Per Seat (₹)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="5"
+                  className="profile-input"
+                  required
+                  value={pricePerSeat}
+                  onChange={e => setPricePerSeat(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+              <div>
+                <label className="profile-field-label">Total Seats</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="10"
+                  className="profile-input"
+                  required
+                  value={totalSeats}
+                  onChange={e => setTotalSeats(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="profile-field-label">Available Seats</label>
+                <input
+                  type="number"
+                  min="0"
+                  max={totalSeats}
+                  className="profile-input"
+                  required
+                  value={availableSeats}
+                  onChange={e => setAvailableSeats(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="profile-field-label">Pool Status</label>
+                <select
+                  className="profile-input"
+                  value={status}
+                  onChange={e => setStatus(e.target.value)}
+                  style={{ background: 'var(--bg-surface)', color: '#fff', cursor: 'pointer' }}
+                >
+                  <option value="OPEN">OPEN</option>
+                  <option value="FULL">FULL</option>
+                  <option value="COMPLETED">COMPLETED</option>
+                  <option value="CANCELLED">CANCELLED</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="profile-field-label">Notes & Pool Guidelines</label>
+              <textarea
+                className="profile-input"
+                rows="2"
+                style={{ resize: 'vertical' }}
+                placeholder="e.g. AC enabled, trunk space for luggage, leaving promptly"
+                value={notes}
+                onChange={e => setNotes(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px' }}>
+            <button type="button" className="quiet" onClick={close} disabled={saving}>
+              Cancel
+            </button>
+            <button type="submit" className="primary-btn" disabled={saving}>
+              <Save size={15} /> {saving ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// Modal to view complete pool & booking specifications, route map, organizer info, and booked commuters
+function PoolDetailsModal({ item, user, close, onOpenMap, onUpdatePool, onCancelBooking }) {
+  if (!item) return null;
+  const isBooking = Boolean(item.customerId || item.passengerName || item.bookingId || (item.seats && item.amount && !item.availableSeats));
+  const ride = item.ride || item;
+
+  const origin = ride.origin || item.origin;
+  const destination = ride.destination || item.destination;
+  const departure = ride.departure || item.departure;
+  const pricePerSeat = ride.pricePerSeat || (item.amount && item.seats ? Math.round(item.amount / item.seats) : 120);
+  const totalSeats = ride.totalSeats || 4;
+  const availableSeats = ride.availableSeats ?? (ride.status === 'FULL' ? 0 : 3);
+  const status = item.status || ride.status || 'OPEN';
+  const notes = ride.notes || item.notes || '';
+  const vehicleInfo = ride.vehicleInfo || ride.vehicle || item.vehicleInfo || 'Pool Car / Shared Vehicle';
+  const driverName = ride.driverName || item.driverName || 'Commuter';
+  const driverPhone = ride.driverPhone || item.driverPhone;
+  const driverEmail = ride.driverEmail || item.driverEmail;
+  const isPast = item.isPast ?? (departure ? new Date(departure) < new Date() : false);
+  const passengers = ride.passengers || [];
+
+  const isOwner = user && (ride.driverId === user.id || ride.driverEmail === user.email || (ride.driver && ride.driver.id === user.id));
+  const isAdmin = user && user.role === 'ADMIN';
+  const canUpdate = isOwner || isAdmin;
+  const canCancel = isBooking && !isPast && status !== 'CANCELLED' && onCancelBooking;
+
+  return (
+    <div className="shade" onMouseDown={close}>
+      <div className="modal" style={{ maxWidth: '640px' }} onMouseDown={e => e.stopPropagation()}>
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '18px', borderBottom: '1px solid var(--border)', paddingBottom: '14px' }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+              <span className={`badge-pill ${isPast ? 'badge-past' : 'badge-upcoming'}`}>
+                {isPast ? '● Past Trip' : '● Upcoming Pool'}
+              </span>
+              <span className={`badge-pill ${status === 'OPEN' || status === 'APPROVED' ? 'badge-approved' : status === 'CANCELLED' || status === 'REJECTED' ? 'badge-rejected' : 'badge-pending'}`}>
+                {status}
+              </span>
+              {isOwner && (
+                <span className="badge-pill" style={{ background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', border: '1px solid #3b82f6' }}>
+                  ★ You are the Pool Organizer
+                </span>
+              )}
+            </div>
+            <h3 style={{ margin: 0, fontSize: '19px', fontWeight: 700 }}>
+              {origin} → {destination}
+            </h3>
+          </div>
+          <button className="icon-btn" onClick={close} type="button">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Route & Timing Spec */}
+        <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: '10px', padding: '14px', marginBottom: '16px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+            <div>
+              <small style={{ color: 'var(--text-muted)', display: 'block', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Departure Schedule</small>
+              <b style={{ color: '#fff', fontSize: '14px' }}>
+                {departure ? new Date(departure).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'Flexible'}
+              </b>
+            </div>
+            <div>
+              <small style={{ color: 'var(--text-muted)', display: 'block', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Route Distance & Est. Time</small>
+              <b style={{ color: '#fff', fontSize: '14px' }}>
+                {item.distanceText || ride.distanceText || '~18 km'} · {item.durationText || ride.durationText || '~35 mins'}
+              </b>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '10px' }}>
+            <div>
+              <small style={{ color: 'var(--text-muted)', fontSize: '11px', display: 'block' }}>Seat Fare</small>
+              <b style={{ color: 'var(--primary)', fontSize: '15px' }}>₹{pricePerSeat} <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>/ seat</span></b>
+            </div>
+            <div>
+              <small style={{ color: 'var(--text-muted)', fontSize: '11px', display: 'block' }}>Open Seats</small>
+              <b style={{ color: availableSeats <= 1 ? '#f59e0b' : '#10b981', fontSize: '15px' }}>
+                {availableSeats} of {totalSeats} open
+              </b>
+            </div>
+            <div>
+              <small style={{ color: 'var(--text-muted)', fontSize: '11px', display: 'block' }}>Vehicle Type</small>
+              <span style={{ color: '#fff', fontSize: '13px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>
+                {vehicleInfo}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Organizer / Driver Section */}
+        <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: '10px', padding: '14px', marginBottom: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+            <span style={{ fontSize: '12px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 600 }}>
+              Pool Organizer Contact
+            </span>
+            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Verified Community Commuter</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div className="driver-avatar-circle" style={{ width: '42px', height: '42px', fontSize: '16px' }}>
+              {driverName?.[0] || 'D'}
+            </div>
+            <div style={{ flex: 1 }}>
+              <b style={{ fontSize: '15px', color: '#fff' }}>{driverName}</b>
+              <div style={{ display: 'flex', gap: '14px', marginTop: '3px', fontSize: '13px', color: 'var(--text-muted)' }}>
+                {driverPhone ? (
+                  <a href={`tel:${driverPhone}`} style={{ color: 'var(--primary)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <Phone size={13} /> {driverPhone}
+                  </a>
+                ) : (
+                  <span><Phone size={13} style={{ verticalAlign: 'middle', marginRight: '3px' }} /> Contact available on join</span>
+                )}
+                {driverEmail && (
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <Mail size={13} /> {driverEmail}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Notes / Guidelines if present */}
+        {notes && (
+          <div style={{ background: 'rgba(16, 185, 129, 0.05)', border: '1px solid rgba(16, 185, 129, 0.2)', borderRadius: '8px', padding: '12px', marginBottom: '16px', fontSize: '13px', color: '#d1fae5' }}>
+            <b style={{ display: 'block', marginBottom: '4px', color: '#10b981' }}>Pool Organizer Notes:</b>
+            {notes}
+          </div>
+        )}
+
+        {/* Booked Passengers List (visible to organizer, admin, or whenever passengers exist) */}
+        {(canUpdate || passengers.length > 0) && (
+          <div className="trip-passengers-section" style={{ marginBottom: '16px' }}>
+            <div className="passengers-title">
+              <Users size={14} /> Booked Commuters ({passengers.length})
+            </div>
+            {passengers.length ? (
+              <div className="passengers-list">
+                {passengers.map((p, idx) => (
+                  <div className="passenger-mini-card" key={p.bookingId || idx}>
+                    <div className="p-avatar">{p.customerName?.[0] || 'C'}</div>
+                    <div className="p-details">
+                      <span className="p-name">{p.customerName || 'Commuter'}</span>
+                      {p.customerPhone && (
+                        <a href={`tel:${p.customerPhone}`} className="p-phone">
+                          <Phone size={11} style={{ marginRight: '3px' }} /> {p.customerPhone}
+                        </a>
+                      )}
+                      <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                        Status: <b style={{ color: p.status === 'APPROVED' ? '#10b981' : '#f59e0b' }}>{p.status}</b> · {p.paymentMethod} ({p.paymentStatus})
+                      </span>
+                    </div>
+                    <span className="p-seats">{p.seats} seat(s)</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-muted)' }}>
+                No commuters have reserved seats in this pool yet.
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Footer Actions */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px', borderTop: '1px solid var(--border)', paddingTop: '14px' }}>
+          <button
+            type="button"
+            className="card-map-action-link"
+            style={{ padding: '8px 14px', borderRadius: '6px' }}
+            onClick={() => onOpenMap && onOpenMap(ride)}
+          >
+            <MapPin size={14} /> Open Route on OpenStreetMap
+          </button>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            {canCancel && (
+              <button
+                type="button"
+                className="quiet"
+                style={{ color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.4)' }}
+                onClick={() => onCancelBooking(item.id || item.bookingId)}
+              >
+                Cancel Booking
+              </button>
+            )}
+            {canUpdate && (
+              <button
+                type="button"
+                className="outline-btn"
+                style={{ borderColor: 'var(--primary)', color: 'var(--primary)' }}
+                onClick={() => onUpdatePool(ride)}
+              >
+                <Edit3 size={14} style={{ marginRight: '4px' }} /> Update Pool
+              </button>
+            )}
+            <button type="button" className="primary-btn" onClick={close}>
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // User Profile & Settings Component
-function Profile({ api, user, setUser, setToken, flash, setPage, isTab }) {
+function Profile({ api, user, setUser, setToken, flash, setPage, isTab, onOpenMap, onUpdatePool, onViewDetails, onCancelBooking }) {
   const [profileTab, setProfileTab] = useState('personal');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [profile, setProfile] = useState(null);
+  const [myRides, setMyRides] = useState([]);
+  const [myBookings, setMyBookings] = useState([]);
+  const [tripsTimingFilter, setTripsTimingFilter] = useState('all'); // 'all' | 'upcoming' | 'past'
+  const [poolsTimingFilter, setPoolsTimingFilter] = useState('all'); // 'all' | 'active' | 'past'
 
   // Form states
   const [name, setName] = useState(user?.name || '');
@@ -1916,8 +2480,14 @@ function Profile({ api, user, setUser, setToken, flash, setPage, isTab }) {
   async function loadProfile() {
     setLoading(true);
     try {
-      const data = await api('/me/profile');
+      const [data, ridesData, bookingsData] = await Promise.all([
+        api('/me/profile'),
+        api('/rides/mine').catch(() => []),
+        api('/bookings/mine').catch(() => [])
+      ]);
       setProfile(data);
+      setMyRides(Array.isArray(ridesData) ? ridesData : []);
+      setMyBookings(Array.isArray(bookingsData) ? bookingsData : []);
       setName(data.name || '');
       setEmail(data.email || '');
       setPhone(data.phone || '');
@@ -2048,6 +2618,18 @@ function Profile({ api, user, setUser, setToken, flash, setPage, isTab }) {
 
   const roleName = profile?.role === 'ADMIN' ? 'Fleet Administrator' : (driver ? 'Verified Driver' : 'Commuter / Passenger');
 
+  const filteredMyRides = myRides.filter(r => {
+    if (poolsTimingFilter === 'active') return !r.isPast && r.status !== 'CANCELLED' && r.status !== 'COMPLETED';
+    if (poolsTimingFilter === 'past') return r.isPast || r.status === 'COMPLETED' || r.status === 'CANCELLED';
+    return true;
+  });
+
+  const filteredMyBookings = myBookings.filter(b => {
+    if (tripsTimingFilter === 'upcoming') return !b.isPast && b.status !== 'CANCELLED';
+    if (tripsTimingFilter === 'past') return b.isPast || b.status === 'CANCELLED';
+    return true;
+  });
+
   const ContainerTag = isTab ? 'div' : 'main';
 
   return (
@@ -2084,23 +2666,51 @@ function Profile({ api, user, setUser, setToken, flash, setPage, isTab }) {
         )}
       </div>
 
-      {/* Quick Statistics Bar */}
+      {/* Quick Statistics Bar with Clickable Past Trips & Pools Data */}
       <div className="profile-stats-grid">
-        <div className="profile-stat-box">
+        <div
+          className={`profile-stat-box clickable ${profileTab === 'my_bookings' ? 'active' : ''}`}
+          onClick={() => setProfileTab('my_bookings')}
+          role="button"
+          tabIndex={0}
+          title="Click to view all your Booked Trips & Past Rides"
+        >
           <span>Trips Booked</span>
-          <b>{profile?.totalBookings ?? 0}</b>
+          <b>{myBookings.length || profile?.totalBookings || 0}</b>
+          <span className="stat-click-hint">Click to view trips →</span>
         </div>
-        <div className="profile-stat-box">
+        <div
+          className={`profile-stat-box clickable ${profileTab === 'my_pools' ? 'active' : ''}`}
+          onClick={() => setProfileTab('my_pools')}
+          role="button"
+          tabIndex={0}
+          title="Click to view your Published Pools & Passenger Data"
+        >
           <span>Rides Published</span>
-          <b>{profile?.totalRides ?? 0}</b>
+          <b>{myRides.length || profile?.totalRides || 0}</b>
+          <span className="stat-click-hint">Click to manage pools →</span>
         </div>
-        <div className="profile-stat-box">
+        <div
+          className={`profile-stat-box clickable ${profileTab === 'driver' ? 'active' : ''}`}
+          onClick={() => setProfileTab('driver')}
+          role="button"
+          tabIndex={0}
+          title="Click to view Driver & Vehicle Details"
+        >
           <span>Driver Status</span>
           <b>{driver ? (driver.verificationStatus === 'VERIFIED' ? 'Verified' : 'In Review') : 'Not Enrolled'}</b>
+          <span className="stat-click-hint">Vehicle settings →</span>
         </div>
-        <div className="profile-stat-box">
+        <div
+          className={`profile-stat-box clickable ${profileTab === 'security' ? 'active' : ''}`}
+          onClick={() => setProfileTab('security')}
+          role="button"
+          tabIndex={0}
+          title="Click to change account password & security"
+        >
           <span>Security Status</span>
           <b>Protected</b>
+          <span className="stat-click-hint">Password & auth →</span>
         </div>
       </div>
 
@@ -2114,18 +2724,32 @@ function Profile({ api, user, setUser, setToken, flash, setPage, isTab }) {
           Personal Details
         </button>
         <button
-          className={profileTab === 'security' ? 'active' : ''}
-          onClick={() => setProfileTab('security')}
+          className={profileTab === 'my_pools' ? 'active' : ''}
+          onClick={() => setProfileTab('my_pools')}
         >
-          <Lock size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} />
-          Password & Security
+          <CarFront size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} />
+          My Published Pools ({myRides.length})
+        </button>
+        <button
+          className={profileTab === 'my_bookings' ? 'active' : ''}
+          onClick={() => setProfileTab('my_bookings')}
+        >
+          <Calendar size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} />
+          My Booked Trips ({myBookings.length})
         </button>
         <button
           className={profileTab === 'driver' ? 'active' : ''}
           onClick={() => setProfileTab('driver')}
         >
-          <CarFront size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} />
+          <ShieldCheck size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} />
           Driver & Vehicle
+        </button>
+        <button
+          className={profileTab === 'security' ? 'active' : ''}
+          onClick={() => setProfileTab('security')}
+        >
+          <Lock size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} />
+          Password & Security
         </button>
       </div>
 
@@ -2446,12 +3070,328 @@ function Profile({ api, user, setUser, setToken, flash, setPage, isTab }) {
           </form>
         </div>
       )}
+
+      {/* Tab 4: My Published Pools & Shared Rides */}
+      {profileTab === 'my_pools' && (
+        <div className="profile-card">
+          <div className="profile-card-header">
+            <div>
+              <div className="profile-card-title">
+                <CarFront size={20} color="var(--primary)" />
+                <span>My Published Pools & Shared Rides</span>
+              </div>
+              <div className="profile-card-subtitle">
+                Manage your created pools, update schedules and seats, and view all booked commuters.
+              </div>
+            </div>
+            {setPage && (
+              <button
+                type="button"
+                className="primary-btn"
+                style={{ fontSize: '13px', padding: '8px 14px' }}
+                onClick={() => setPage('home')}
+              >
+                <Plus size={14} /> Start New Pool
+              </button>
+            )}
+          </div>
+
+          {/* Timing Filter for Published Pools */}
+          <div className="admin-filter-bar" style={{ marginBottom: '16px' }}>
+            <div className="admin-filter-group">
+              <button
+                type="button"
+                className={`filter-chip ${poolsTimingFilter === 'all' ? 'active' : ''}`}
+                onClick={() => setPoolsTimingFilter('all')}
+              >
+                All Pools ({myRides.length})
+              </button>
+              <button
+                type="button"
+                className={`filter-chip ${poolsTimingFilter === 'active' ? 'active' : ''}`}
+                onClick={() => setPoolsTimingFilter('active')}
+              >
+                Active / Upcoming ({myRides.filter(r => !r.isPast && r.status !== 'CANCELLED' && r.status !== 'COMPLETED').length})
+              </button>
+              <button
+                type="button"
+                className={`filter-chip ${poolsTimingFilter === 'past' ? 'active' : ''}`}
+                onClick={() => setPoolsTimingFilter('past')}
+              >
+                Completed & Past ({myRides.filter(r => r.isPast || r.status === 'COMPLETED' || r.status === 'CANCELLED').length})
+              </button>
+            </div>
+          </div>
+
+          {filteredMyRides.length ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {filteredMyRides.map(r => (
+                <div className={`trip-item-card ${r.isPast ? 'is-past' : 'is-active'}`} key={r.id}>
+                  <div className="trip-card-header">
+                    <div className="trip-route-title">
+                      <b>{r.origin}</b> → <b>{r.destination}</b>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <span className={`badge-pill ${r.isPast ? 'badge-past' : 'badge-upcoming'}`}>
+                        {r.isPast ? '● Past Pool' : '● Active Pool'}
+                      </span>
+                      <span className={`badge-pill ${r.status === 'OPEN' ? 'badge-approved' : r.status === 'CANCELLED' ? 'badge-rejected' : 'badge-pending'}`}>
+                        {r.status}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="trip-meta-grid">
+                    <div>
+                      <small>Departure Time</small>
+                      <b>{r.departure ? new Date(r.departure).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'Flexible'}</b>
+                    </div>
+                    <div>
+                      <small>Seats Open</small>
+                      <b style={{ color: r.availableSeats <= 1 ? '#f59e0b' : '#10b981' }}>
+                        {r.availableSeats} of {r.totalSeats || 4} available
+                      </b>
+                    </div>
+                    <div>
+                      <small>Fare per Seat</small>
+                      <b style={{ color: 'var(--primary)' }}>₹{r.pricePerSeat}</b>
+                    </div>
+                    <div>
+                      <small>Distance & Time</small>
+                      <span>{r.distanceText || '18.4 km'} · {r.durationText || '35 mins'}</span>
+                    </div>
+                  </div>
+
+                  {/* Booked Passengers / Commuters in this pool */}
+                  <div className="trip-passengers-section">
+                    <div className="passengers-title">
+                      <Users size={13} /> Reserved Commuters ({r.passengers?.length || 0})
+                    </div>
+                    {r.passengers && r.passengers.length > 0 ? (
+                      <div className="passengers-list">
+                        {r.passengers.map((p, idx) => (
+                          <div className="passenger-mini-card" key={p.bookingId || idx}>
+                            <div className="p-avatar">{p.customerName?.[0] || 'C'}</div>
+                            <div className="p-details">
+                              <span className="p-name">{p.customerName || 'Commuter'}</span>
+                              {p.customerPhone && (
+                                <a href={`tel:${p.customerPhone}`} className="p-phone">
+                                  <Phone size={11} style={{ marginRight: '3px' }} /> {p.customerPhone}
+                                </a>
+                              )}
+                              <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                                {p.paymentMethod} · {p.paymentStatus}
+                              </span>
+                            </div>
+                            <span className="p-seats">{p.seats} seat(s)</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-muted)' }}>
+                        No commuters have booked seats in this pool yet. Seats are currently open for booking.
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Actions Row */}
+                  <div className="trip-actions-row">
+                    <button
+                      type="button"
+                      className="card-map-action-link"
+                      onClick={() => onOpenMap && onOpenMap(r)}
+                    >
+                      <MapPin size={13} /> Route Map
+                    </button>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button
+                        type="button"
+                        className="outline-btn"
+                        style={{ fontSize: '13px', padding: '6px 14px', borderColor: 'var(--primary)', color: 'var(--primary)' }}
+                        onClick={() => onUpdatePool && onUpdatePool(r)}
+                      >
+                        <Edit3 size={13} style={{ marginRight: '4px' }} /> Update Pool
+                      </button>
+                      <button
+                        type="button"
+                        className="outline-btn"
+                        style={{ fontSize: '13px', padding: '6px 14px' }}
+                        onClick={() => onViewDetails && onViewDetails(r)}
+                      >
+                        <Eye size={13} style={{ marginRight: '4px' }} /> View Details
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-card">
+              <CarFront size={32} color="var(--primary)" />
+              <h3>No published pools found</h3>
+              <p>You have not published any commuter pools {poolsTimingFilter !== 'all' ? `in the ${poolsTimingFilter} filter` : ''} yet.</p>
+              {setPage && (
+                <button className="primary-btn" onClick={() => setPage('home')}>
+                  <Plus size={15} /> Start a Pool Now
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Tab 5: My Booked Trips & Past Ride History */}
+      {profileTab === 'my_bookings' && (
+        <div className="profile-card">
+          <div className="profile-card-header">
+            <div>
+              <div className="profile-card-title">
+                <Calendar size={20} color="var(--primary)" />
+                <span>My Booked Trips & Past Ride History</span>
+              </div>
+              <div className="profile-card-subtitle">
+                View your upcoming reservations, past trip logs, organizer contacts, and route directions.
+              </div>
+            </div>
+            {setPage && (
+              <button
+                type="button"
+                className="primary-btn"
+                style={{ fontSize: '13px', padding: '8px 14px' }}
+                onClick={() => setPage('search_pool')}
+              >
+                <Search size={14} /> Search Pools
+              </button>
+            )}
+          </div>
+
+          {/* Timing Filter for Bookings */}
+          <div className="admin-filter-bar" style={{ marginBottom: '16px' }}>
+            <div className="admin-filter-group">
+              <button
+                type="button"
+                className={`filter-chip ${tripsTimingFilter === 'all' ? 'active' : ''}`}
+                onClick={() => setTripsTimingFilter('all')}
+              >
+                All Trips ({myBookings.length})
+              </button>
+              <button
+                type="button"
+                className={`filter-chip ${tripsTimingFilter === 'upcoming' ? 'active' : ''}`}
+                onClick={() => setTripsTimingFilter('upcoming')}
+              >
+                Upcoming Trips ({myBookings.filter(b => !b.isPast && b.status !== 'CANCELLED').length})
+              </button>
+              <button
+                type="button"
+                className={`filter-chip ${tripsTimingFilter === 'past' ? 'active' : ''}`}
+                onClick={() => setTripsTimingFilter('past')}
+              >
+                Past Trips History ({myBookings.filter(b => b.isPast || b.status === 'CANCELLED').length})
+              </button>
+            </div>
+          </div>
+
+          {filteredMyBookings.length ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {filteredMyBookings.map(b => (
+                <div className={`trip-item-card ${b.isPast ? 'is-past' : 'is-active'}`} key={b.id}>
+                  <div className="trip-card-header">
+                    <div className="trip-route-title">
+                      <b>{b.origin}</b> → <b>{b.destination}</b>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <span className={`badge-pill ${b.isPast ? 'badge-past' : 'badge-upcoming'}`}>
+                        {b.isPast ? '● Past Trip' : '● Upcoming'}
+                      </span>
+                      <span className={`badge-pill ${b.status === 'APPROVED' ? 'badge-approved' : b.status === 'REJECTED' || b.status === 'CANCELLED' ? 'badge-rejected' : 'badge-pending'}`}>
+                        {b.status}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="trip-meta-grid">
+                    <div>
+                      <small>Trip Departure</small>
+                      <b>{b.departure ? new Date(b.departure).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'Flexible'}</b>
+                    </div>
+                    <div>
+                      <small>Reserved Seats</small>
+                      <b style={{ color: 'var(--primary)' }}>{b.seats} seat(s) · ₹{b.amount}</b>
+                    </div>
+                    <div>
+                      <small>Pool Organizer</small>
+                      <b>{b.driverName || 'Commuter'}</b>
+                      {b.driverPhone && (
+                        <div style={{ fontSize: '12px' }}>
+                          <a href={`tel:${b.driverPhone}`} style={{ color: 'var(--primary)', textDecoration: 'none' }}>
+                            <Phone size={11} style={{ marginRight: '3px' }} /> {b.driverPhone}
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                      <small>Vehicle Details</small>
+                      <span>{b.vehicleInfo || 'Pool Car / Shared Vehicle'}</span>
+                    </div>
+                  </div>
+
+                  {/* Actions Row */}
+                  <div className="trip-actions-row">
+                    <button
+                      type="button"
+                      className="card-map-action-link"
+                      onClick={() => onOpenMap && onOpenMap(b)}
+                    >
+                      <MapPin size={13} /> Route Map
+                    </button>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      {!b.isPast && b.status !== 'CANCELLED' && onCancelBooking && (
+                        <button
+                          type="button"
+                          className="quiet"
+                          style={{ color: '#ef4444', fontSize: '13px', padding: '6px 12px' }}
+                          onClick={async () => {
+                            await onCancelBooking(b.id);
+                            loadProfile();
+                          }}
+                        >
+                          Cancel Booking
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="outline-btn"
+                        style={{ fontSize: '13px', padding: '6px 14px' }}
+                        onClick={() => onViewDetails && onViewDetails(b)}
+                      >
+                        <Eye size={13} style={{ marginRight: '4px' }} /> View Details
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-card">
+              <Calendar size={32} color="var(--primary)" />
+              <h3>No {tripsTimingFilter !== 'all' ? tripsTimingFilter : ''} booked trips found</h3>
+              <p>Explore upcoming commuter pools and join shared rides on your daily route.</p>
+              {setPage && (
+                <button className="primary-btn" onClick={() => setPage('search_pool')}>
+                  <Search size={15} /> Find Available Pools
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </ContainerTag>
   );
 }
 
 // Admin Operations Center (Fleet Command Center)
-function Admin({ api, flash, doAction, onOpenMap }) {
+function Admin({ api, flash, doAction, onOpenMap, onUpdatePool, onViewDetails }) {
   const [data, setData] = useState({});
   const [drivers, setDrivers] = useState([]);
   const [tab, setTab] = useState('bookings');
@@ -2591,6 +3531,7 @@ function Admin({ api, flash, doAction, onOpenMap }) {
                   <th>Seats & Fare</th>
                   <th>Status</th>
                   <th>Payment</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -2643,11 +3584,22 @@ function Admin({ api, flash, doAction, onOpenMap }) {
                           </span>
                         </div>
                       </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="outline-btn"
+                          style={{ padding: '4px 8px', fontSize: '11px' }}
+                          onClick={() => onViewDetails && onViewDetails(b)}
+                          title="View booking & trip details"
+                        >
+                          <Eye size={12} style={{ marginRight: '3px' }} /> Details
+                        </button>
+                      </td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan="9" style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)' }}>
+                    <td colSpan="10" style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)' }}>
                       No customer bookings found {timingFilter !== 'all' ? `for ${timingFilter} trips` : ''}.
                     </td>
                   </tr>
@@ -2672,6 +3624,7 @@ function Admin({ api, flash, doAction, onOpenMap }) {
                 <th>Seats</th>
                 <th>Price/Seat</th>
                 <th>Status</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -2706,11 +3659,33 @@ function Admin({ api, flash, doAction, onOpenMap }) {
                     <td>{r.availableSeats} / {r.totalSeats} open</td>
                     <td><b>₹{r.pricePerSeat}</b></td>
                     <td><b className="badge-pill badge-approved">{r.status}</b></td>
+                    <td>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <button
+                          type="button"
+                          className="outline-btn"
+                          style={{ padding: '4px 8px', fontSize: '11px', borderColor: 'var(--primary)', color: 'var(--primary)' }}
+                          onClick={() => onUpdatePool && onUpdatePool(r)}
+                          title="Admin: Edit Pool Schedule & Seats"
+                        >
+                          <Edit3 size={11} style={{ marginRight: '2px' }} /> Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="outline-btn"
+                          style={{ padding: '4px 8px', fontSize: '11px' }}
+                          onClick={() => onViewDetails && onViewDetails(r)}
+                          title="View Pool Details & Commuters"
+                        >
+                          <Eye size={11} style={{ marginRight: '2px' }} /> View
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan="8" style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)' }}>
+                  <td colSpan="9" style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)' }}>
                     No rides found.
                   </td>
                 </tr>

@@ -9,6 +9,7 @@ import jakarta.validation.constraints.Positive;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -110,6 +111,10 @@ public class ApiController {
 
     record DriverUpdateForm(String licenseNumber, String vehicleMake, String vehicleModel, String vehiclePlate,
             Integer vehicleSeats) {
+    }
+
+    record UpdateRideForm(String origin, String destination, String departure, Integer totalSeats,
+            Integer availableSeats, Double pricePerSeat, String notes, String status) {
     }
 
     @GetMapping("/maps/route")
@@ -371,6 +376,102 @@ public class ApiController {
         return rides.findByDriverId(u.id).stream().map(this::rideView).toList();
     }
 
+    @GetMapping("/rides/{id}")
+    public Object rideDetails(@PathVariable Long id) {
+        Ride r = rides.findById(id).orElse(null);
+        if (r == null)
+            return err(404, "Ride or pool not found");
+        return rideView(r);
+    }
+
+    @PutMapping("/rides/{id}")
+    public Object updateRide(@RequestHeader(value = "Authorization", required = false) String a,
+            @PathVariable Long id,
+            @RequestBody UpdateRideForm q) {
+        User u = required(a);
+        if (u == null)
+            return err(401, "Sign in required");
+        Ride r = rides.findById(id).orElse(null);
+        if (r == null)
+            return err(404, "Ride or pool not found");
+
+        boolean isOwner = r.driver != null && r.driver.id.equals(u.id);
+        boolean isAdmin = "ADMIN".equalsIgnoreCase(u.role);
+        if (!isOwner && !isAdmin) {
+            return err(403, "Only the pool owner or an administrator can update this pool");
+        }
+
+        if (q.origin() != null && !q.origin().trim().isBlank()) {
+            r.origin = q.origin().trim();
+        }
+        if (q.destination() != null && !q.destination().trim().isBlank()) {
+            r.destination = q.destination().trim();
+        }
+        if (q.departure() != null && !q.departure().isBlank()) {
+            try {
+                r.departure = LocalDateTime.parse(q.departure().trim());
+            } catch (Exception ignored) {
+            }
+        }
+        if (q.totalSeats() != null && q.totalSeats() > 0) {
+            int bookedSeats = r.totalSeats - r.availableSeats;
+            r.totalSeats = q.totalSeats();
+            r.availableSeats = Math.max(0, q.totalSeats() - bookedSeats);
+        }
+        if (q.availableSeats() != null && q.availableSeats() >= 0) {
+            r.availableSeats = Math.min(q.availableSeats(), r.totalSeats);
+        }
+        if (q.pricePerSeat() != null && q.pricePerSeat() > 0) {
+            r.pricePerSeat = q.pricePerSeat();
+        }
+        if (q.notes() != null) {
+            r.notes = q.notes().trim();
+        }
+        if (q.status() != null && !q.status().isBlank()) {
+            String s = q.status().trim().toUpperCase();
+            if (Set.of("OPEN", "FULL", "COMPLETED", "CANCELLED").contains(s)) {
+                r.status = s;
+                if ("CANCELLED".equals(s)) {
+                    List<Booking> rideBookings = bookings.findByRideId(r.id);
+                    for (Booking b : rideBookings) {
+                        b.status = "CANCELLED";
+                        bookings.save(b);
+                    }
+                }
+            }
+        }
+        Ride saved = rides.save(r);
+        return Map.of(
+                "message", "Pool updated successfully",
+                "ride", rideView(saved));
+    }
+
+    @DeleteMapping("/bookings/{id}")
+    public Object cancelBooking(@RequestHeader(value = "Authorization", required = false) String a,
+            @PathVariable Long id) {
+        User u = required(a);
+        if (u == null)
+            return err(401, "Sign in required");
+        Booking b = bookings.findById(id).orElse(null);
+        if (b == null)
+            return err(404, "Booking not found");
+        boolean isPassenger = b.passenger != null && b.passenger.id.equals(u.id);
+        boolean isAdmin = "ADMIN".equalsIgnoreCase(u.role);
+        if (!isPassenger && !isAdmin) {
+            return err(403, "Not authorized to cancel this booking");
+        }
+        b.status = "CANCELLED";
+        if (b.ride != null) {
+            b.ride.availableSeats += b.seats;
+            if ("FULL".equalsIgnoreCase(b.ride.status)) {
+                b.ride.status = "OPEN";
+            }
+            rides.save(b.ride);
+        }
+        bookings.save(b);
+        return Map.of("message", "Booking cancelled successfully");
+    }
+
     @Transactional
     @PostMapping("/rides/{id}/bookings")
     public Object book(@RequestHeader(value = "Authorization", required = false) String a, @PathVariable Long id,
@@ -384,7 +485,7 @@ public class ApiController {
         Ride r = rides.findById(id).orElse(null);
         if (r == null || !"OPEN".equals(r.status))
             return err(404, "Ride unavailable");
-        if (r.driver.id.equals(u.id))
+        if (r.driver != null && r.driver.id != null && r.driver.id.equals(u.id))
             return err(400, "Drivers cannot book their own ride");
         if (r.availableSeats < q.seats())
             return err(409, "Not enough seats remain");
@@ -406,7 +507,7 @@ public class ApiController {
         Booking b = bookings.findById(id).orElse(null);
         if (b == null)
             return err(404, "Booking not found");
-        if (!b.ride.driver.id.equals(u.id))
+        if (b.ride == null || b.ride.driver == null || !b.ride.driver.id.equals(u.id))
             return err(403, "Only the driver can decide this booking");
         if (!"PENDING".equals(b.status))
             return err(409, "Booking already decided");
@@ -431,7 +532,7 @@ public class ApiController {
         User u = required(a);
         if (u == null)
             return err(401, "Sign in required");
-        return bookings.findByPassengerId(u.id);
+        return bookings.findByPassengerId(u.id).stream().map(this::customerBookingView).toList();
     }
 
     @GetMapping("/bookings/requests")
@@ -718,32 +819,100 @@ public class ApiController {
 
     private Map<String, Object> rideView(Ride r) {
         RouteEstimate est = maps.estimateRoute(r.origin, r.destination);
-        Driver d = drivers.findByUserId(r.driver.id).orElse(null);
-        String vehicleInfo = (d != null && d.vehicleMake != null && !d.vehicleMake.isBlank() && !"N/A".equals(d.licenseNumber))
-                ? (d.vehicleMake + " " + (d.vehicleModel != null ? d.vehicleModel : "") + (d.vehiclePlate != null && !d.vehiclePlate.isBlank() ? " (" + d.vehiclePlate + ")" : ""))
-                : "Pool Car / Shared Vehicle";
-        String driverPhone = r.driver.phone != null ? r.driver.phone : "";
-        String driverEmail = r.driver.email != null ? r.driver.email : "";
+        Driver d = (r.driver != null && r.driver.id != null) ? drivers.findByUserId(r.driver.id).orElse(null) : null;
+        String vehicleInfo = (d != null && d.vehicleMake != null && !d.vehicleMake.isBlank()
+                && !"N/A".equals(d.licenseNumber))
+                        ? (d.vehicleMake + " " + (d.vehicleModel != null ? d.vehicleModel : "")
+                                + (d.vehiclePlate != null && !d.vehiclePlate.isBlank() ? " (" + d.vehiclePlate + ")"
+                                        : ""))
+                        : "Pool Car / Shared Vehicle";
+        String driverPhone = (r.driver != null && r.driver.phone != null) ? r.driver.phone : "";
+        String driverEmail = (r.driver != null && r.driver.email != null) ? r.driver.email : "";
+        String driverName = (r.driver != null && r.driver.name != null) ? r.driver.name : "Commuter";
+        Long driverId = (r.driver != null && r.driver.id != null) ? r.driver.id : 0L;
+        boolean isPast = r.departure != null && r.departure.isBefore(LocalDateTime.now());
 
-        return Map.ofEntries(
-                Map.entry("id", r.id),
-                Map.entry("driverId", r.driver.id),
-                Map.entry("driverName", r.driver.name != null ? r.driver.name : "Commuter"),
-                Map.entry("driverEmail", driverEmail),
-                Map.entry("driverPhone", driverPhone),
-                Map.entry("vehicleInfo", vehicleInfo),
-                Map.entry("origin", r.origin),
-                Map.entry("destination", r.destination),
-                Map.entry("departure", r.departure != null ? r.departure.toString() : ""),
-                Map.entry("totalSeats", r.totalSeats),
-                Map.entry("availableSeats", r.availableSeats),
-                Map.entry("pricePerSeat", r.pricePerSeat),
-                Map.entry("status", r.status),
-                Map.entry("notes", r.notes == null ? "" : r.notes),
-                Map.entry("distanceText", est.distanceText()),
-                Map.entry("durationText", est.durationText()),
-                Map.entry("mapUrl", est.mapUrl()),
-                Map.entry("embedUrl", est.embedUrl()));
+        List<Map<String, Object>> passengers = bookings.findByRideId(r.id).stream()
+                .map(b -> {
+                    Map<String, Object> bm = new HashMap<>();
+                    bm.put("bookingId", b.id);
+                    bm.put("passengerId", b.passenger != null ? b.passenger.id : 0L);
+                    bm.put("passengerName",
+                            b.passenger != null && b.passenger.name != null ? b.passenger.name : "Commuter");
+                    bm.put("passengerEmail", b.passenger != null && b.passenger.email != null ? b.passenger.email : "");
+                    bm.put("passengerPhone", b.passenger != null && b.passenger.phone != null ? b.passenger.phone : "");
+                    bm.put("seats", b.seats);
+                    bm.put("amount", b.amount);
+                    bm.put("paymentMethod", b.paymentMethod != null ? b.paymentMethod : "CASH");
+                    bm.put("paymentStatus", b.paymentStatus != null ? b.paymentStatus : "UNPAID");
+                    bm.put("status", b.status != null ? b.status : "CONFIRMED");
+                    bm.put("createdAt", b.createdAt != null ? b.createdAt.toString() : "");
+                    return bm;
+                }).toList();
+
+        Map<String, Object> m = new HashMap<>();
+        m.put("id", r.id);
+        m.put("driverId", driverId);
+        m.put("driverName", driverName);
+        m.put("driverEmail", driverEmail);
+        m.put("driverPhone", driverPhone);
+        m.put("vehicleInfo", vehicleInfo);
+        m.put("origin", r.origin);
+        m.put("destination", r.destination);
+        m.put("departure", r.departure != null ? r.departure.toString() : "");
+        m.put("totalSeats", r.totalSeats);
+        m.put("availableSeats", r.availableSeats);
+        m.put("pricePerSeat", r.pricePerSeat);
+        m.put("status", r.status);
+        m.put("notes", r.notes == null ? "" : r.notes);
+        m.put("distanceText", est.distanceText());
+        m.put("durationText", est.durationText());
+        m.put("mapUrl", est.mapUrl());
+        m.put("embedUrl", est.embedUrl());
+        m.put("passengers", passengers);
+        m.put("isPast", isPast);
+        return m;
+    }
+
+    private Map<String, Object> customerBookingView(Booking b) {
+        Ride r = b.ride;
+        String driverName = r != null && r.driver != null && r.driver.name != null ? r.driver.name : "Commuter";
+        String driverPhone = r != null && r.driver != null && r.driver.phone != null ? r.driver.phone : "";
+        String driverEmail = r != null && r.driver != null && r.driver.email != null ? r.driver.email : "";
+        Driver d = r != null && r.driver != null ? drivers.findByUserId(r.driver.id).orElse(null) : null;
+        String vehicleInfo = (d != null && d.vehicleMake != null && !d.vehicleMake.isBlank()
+                && !"N/A".equals(d.licenseNumber))
+                        ? (d.vehicleMake + " " + (d.vehicleModel != null ? d.vehicleModel : "")
+                                + (d.vehiclePlate != null && !d.vehiclePlate.isBlank() ? " (" + d.vehiclePlate + ")"
+                                        : ""))
+                        : "Pool Car / Shared Vehicle";
+        boolean isPast = r != null && r.departure != null && r.departure.isBefore(LocalDateTime.now());
+        RouteEstimate est = r != null ? maps.estimateRoute(r.origin, r.destination)
+                : new RouteEstimate(0, 0, "N/A", "N/A", "NONE", "", "");
+
+        Map<String, Object> m = new HashMap<>();
+        m.put("id", b.id);
+        m.put("rideId", r != null ? r.id : null);
+        m.put("origin", r != null ? r.origin : "");
+        m.put("destination", r != null ? r.destination : "");
+        m.put("departure", r != null && r.departure != null ? r.departure.toString() : "");
+        m.put("pricePerSeat", r != null ? r.pricePerSeat : 0.0);
+        m.put("seats", b.seats);
+        m.put("amount", b.amount);
+        m.put("status", b.status != null ? b.status : "CONFIRMED");
+        m.put("paymentMethod", b.paymentMethod != null ? b.paymentMethod : "CASH");
+        m.put("paymentStatus", b.paymentStatus != null ? b.paymentStatus : "UNPAID");
+        m.put("driverName", driverName);
+        m.put("driverPhone", driverPhone);
+        m.put("driverEmail", driverEmail);
+        m.put("vehicleInfo", vehicleInfo);
+        m.put("notes", r != null && r.notes != null ? r.notes : "");
+        m.put("isPast", isPast);
+        m.put("distanceText", est.distanceText());
+        m.put("durationText", est.durationText());
+        m.put("mapUrl", est.mapUrl());
+        m.put("embedUrl", est.embedUrl());
+        return m;
     }
 
     private Map<String, Object> adminBookingView(Booking b) {
