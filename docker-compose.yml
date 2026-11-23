@@ -17,20 +17,18 @@ services:
     build: ./backend
     environment:
       PORT: 8080
-      DB_URL: jdbc:mysql://mysql:3306/rideshare?createDatabaseIfNotExist=true&serverTimezone=UTC
-      DB_USER: rideshare
-      DB_PASSWORD: rideshare_local
-      DB_DRIVER: com.mysql.cj.jdbc.Driver
-      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@rideshare.local}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-ChangeMe123!}
+      DB_URL: ${DB_URL:-jdbc:postgresql://dpg-dc24mfijnfac73ab76jg-a.oregon-postgres.render.com:5432/pooling?sslmode=require}
+      DB_USER: ${DB_USER:-pooling_user}
+      DB_PASSWORD: ${DB_PASSWORD:-8ojnjl0QCEPpMRug99ysPjwCJ95YoX18}
+      DB_DRIVER: ${DB_DRIVER:-org.postgresql.Driver}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@commonway.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
       JWT_SECRET: ${JWT_SECRET:-local-dev-change-this-secret-before-deploying-2026}
       DRIVER_VERIFICATION_API_KEY: ${DRIVER_VERIFICATION_API_KEY:-}
       RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
       RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
       MAPS_PROVIDER: ${MAPS_PROVIDER:-openstreetmap}
       CORS_ORIGIN: http://localhost:5173
-    depends_on:
-      mysql: {condition: service_healthy}
     expose: ["8080"]
   gateway:
     image: nginx:1.27-alpine
